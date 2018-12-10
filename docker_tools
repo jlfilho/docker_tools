@@ -1,30 +1,146 @@
-### Commented entries have reasonable defaults.
-### Uncomment to edit them.
-# Source: <source package name; defaults to package name>
-Section: misc
-Priority: optional
-# Homepage: <enter URL here; no default>
-Standards-Version: 3.9.2
+#!/bin/bash
+#by Joao da Mata
+#Version 0.01
 
-Package: <package name; defaults to equivs-dummy>
-# Version: <enter version here; defaults to 1.0>
-# Maintainer: Your Name <yourname@example.com>
-# Pre-Depends: <comma-separated list of packages>
-# Depends: <comma-separated list of packages>
-# Recommends: <comma-separated list of packages>
-# Suggests: <comma-separated list of packages>
-# Provides: <comma-separated list of packages>
-# Replaces: <comma-separated list of packages>
-# Architecture: all
-# Multi-Arch: <one of: foreign|same|allowed>
-# Copyright: <copyright file; defaults to GPL2>
-# Changelog: <changelog file; defaults to a generic changelog>
-# Readme: <README.Debian file; defaults to a generic one>
-# Extra-Files: <comma-separated list of additional files for the doc directory>
-# Links: <pair of space-separated paths; First is path symlink points at, second is filename of link>
-# Files: <pair of space-separated paths; First is file to include, second is destination>
-#  <more pairs, if there's more than one file to include. Notice the starting space>
-Description: <short description; defaults to some wise words> 
- long description and info
- .
- second paragraph
+inet="enp0s31f6"
+
+print_usage() {
+  echo "Uso:"
+  echo -e " $0 [opção]\n"
+  echo -e "Opções:
+  -u\tUsuário: -u teste
+  -v\tVersão do pyton 2|3: -v 3
+  -p\tPorta para ssh no container: -p 2002
+  -r\tRemove conteiner e volumes mapeados
+  -h\tAjuda
+
+   Ex.:
+      $0 -u teste -p 2002 -v 3  \t=>Para criar um novo container com python3 para o usuário teste porta 2002
+      $0 -r teste.latest-gpu-py3\t=>Para remover o container"
+}
+
+make_dir() {
+   if [ ! -d /home/$user ] && [ ! -d /data/$user  ]
+   then
+      mkdir /home/$user
+      mkdir /data/$user
+      echo "Volumes /home/$user /data/$user criados"
+   else
+      echo "Usuário já existe."
+      exit 0
+   fi
+}
+remove() {
+    user=$(echo $container | cut -d. -f1)
+    if [ "$(docker ps -a --format="{{.Names}}" | grep "\<$container\>")" ]; then
+       echo "Tem certeza que deseja remover o container do usuário $user?[s/n]"
+       read RESPOSTA
+       test "$RESPOSTA" = "n" && exit 0
+       echo "Aguarde, preparando para remover..."
+       test "$RESPOSTA" = "s" && docker stop $container 
+       test "$RESPOSTA" = "s" && docker rm $container && rm -r /home/$user /data/$user && echo "Removido com sucesso!"
+       exit 0
+    else
+       echo -e "Container $container não existe!"
+    fi
+     exit 0
+}
+info(){
+	echo -e "Copie os dados abaixo para repassar ao usuário:
++----------------------------------------------------------------+
+\tDados de acesso:
+\tIP: $ip
+\tPorta: $port 
+\tUsuário: $user 
+\tSenha: $senha
+\tVolumes mapeados: /hd /ssd
+\tAcesso Remoto: ssh -p $port $user@$ip 
+
+\tPara executar o jupyter:
+\tsudo -i
+\tcd /hd
+\tscreen
+\tjupyter notebook --allow-root
+\tCopie o token em um local seguro
+\tSaia do screen com Ctrl+A+D
+
+\tNo cliente crie um tunel ssh:
+\tssh -p $port -L 8157:127.0.0.1:8888 $user@$ip
+\tNo navegador acesse http://127.0.0.1:8157
++-----------------------------------------------------------------+"
+exit 0
+}
+
+
+while getopts hu:p:v:r: OPCAO; do
+   case "${OPCAO}" in
+      u) user="${OPTARG}" ;;
+      v) version="${OPTARG}" ;;
+      p) port="${OPTARG}" ;;
+      -h) print_usage
+          exit 1 ;;
+      r) container="${OPTARG}" 
+	remove
+	;;
+      *) print_usage
+         exit 1 ;;
+   esac
+done
+  
+
+if [ ${version} ] && [ ${user} ] && [ ${port} ]
+then
+  if [ ${version} = 3 ]
+  then
+      porta_usada=$(netstat -tlp --numeric-ports | sed 's/\s\+/ /g' | cut -d' ' -f4 | grep -o '[^:]*$' | grep $port)
+      [ ${porta_usada} ] && echo "Erro: A porta $port está ocupada!" && exit 0
+      echo -e "Criando volumes..."
+      make_dir
+      echo -e "Criando container..."
+      docker run -v /home/$user:/ssd -v /data/$user:/hd -d --runtime=nvidia -it -p $port:22 --restart unless-stopped --name $user.latest-gpu-py3 tensorflow/tensorflow:latest-gpu-py3
+      echo -e "Criando usuário..."
+      docker exec -it $user.latest-gpu-py3 useradd $user -d /hd -s /bin/bash
+      echo  -e "Definindo permissões..."
+      docker exec -it $user.latest-gpu-py3 usermod -aG sudo $user
+      senha=$(tr -cd '[:alnum:]' < /dev/urandom | fold -w6 | head -n1)
+      docker exec -it $user.latest-gpu-py3 usermod -p $(echo $senha | openssl passwd -1 -stdin) $user
+      docker exec -it $user.latest-gpu-py3 chown -R $user:$user /hd /ssd 
+      echo -e "Instalando pacotes..."
+      docker exec -it $user.latest-gpu-py3 apt update
+      docker exec -it $user.latest-gpu-py3 apt install screen sudo nano
+      ip=$(/sbin/ip addr show $inet | awk -F"[ /]+" '/inet / {print $3}') 
+      echo -e "\nContainer $user.latest-gpu-py3 criado com sucesso!\n"
+      info
+  elif [ ${version} = 2 ]
+  then
+      porta_usada=$(netstat -tlp --numeric-ports | sed 's/\s\+/ /g' | cut -d' ' -f4 | grep -o '[^:]*$' | grep $port)
+      [ ${porta_usada} ] && echo "Erro: A porta $port está ocupada!" && exit 0
+      echo -e "Criando volumes..."
+      make_dir
+      echo -e "Criando container..."
+      docker run -v /home/$user:/ssd -v /data/$user:/hd -d --runtime=nvidia -it -p $port:22 --restart unless-stopped --name $user.latest-gpu tensorflow/tensorflow:latest-gpu
+      echo -e "Criando usuário..."
+      docker exec -it $user.latest-gpu useradd $user -d /hd -s /bin/bash
+      echo  -e "Definindo permissões..."
+      docker exec -it $user.latest-gpu usermod -aG sudo $user
+      senha=$(tr -cd '[:alnum:]' < /dev/urandom | fold -w6 | head -n1)
+      docker exec -it $user.latest-gpu usermod -p $(echo $senha | openssl passwd -1 -stdin) $user
+      docker exec -it $user.latest-gpu chown -R $user:$user /hd /ssd 
+      echo -e "Instalando pacotes..."
+      docker exec -it $user.latest-gpu apt update
+      docker exec -it $user.latest-gpu apt install screen sudo nano
+      ip=$(/sbin/ip addr show $inet | awk -F"[ /]+" '/inet / {print $3}') 
+      echo -e "\nContainer $user.latest-gpu criado com sucesso!\n"
+      info
+  else
+      echo "Parâmetro -v incorreto."
+      print_usage
+  fi
+else
+   echo -e "Erro: falta parâmetro!"
+   print_usage
+fi
+
+
+exit 0
+ 
