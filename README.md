@@ -3,8 +3,13 @@ autor: Joao da Mata
 
 Ferramenta para criar e remover container docker com mapeamento de volumes da máquina física
 
+
+# Instalação:
+./install.sh 
+
+
 Uso:
- ./docker_tools [opção]
+ docker_tools [opção]
 
 Opções:
   -u	Usuário: -u teste
